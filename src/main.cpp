@@ -5,12 +5,12 @@
 #include <TimerMs.h>
 #include <EEPROM.h>
 
-#define THRESHOLD 30
+#define THRESHOLD 20
 
 // Memory
-#define ADDR_HOURS 0
-#define ADDR_MINUTES 1
-#define ADDR_DURATION 2
+#define ADDR_HOURS 3
+#define ADDR_MINUTES 5
+#define ADDR_DURATION 7
 
 // Hardware pins
 #define PUMP_PIN 4
@@ -32,7 +32,7 @@ EncButton<EB_TICK, BTN_PIN> btn;
 MicroDS3231 rtc;
 
 TimerMs clockTimer(500, 0, 0);
-TimerMs scheduleTimer(30000, 1, 0);
+TimerMs scheduleTimer(35000, 1, 0);
 
 // Default values
 int scheduledHour = 0;
@@ -78,10 +78,9 @@ void setup()
 }
 
 void startWater(){
-  byte duration = EEPROM.read(ADDR_DURATION);
-  unsigned long seconds = int(duration * (double)MAX_DURATION/1024);
+  unsigned long seconds = int(storedDuration * (double)MAX_DURATION/1024);
   Serial.print("Duration: ");
-  Serial.print(duration);
+  Serial.print(storedDuration);
   Serial.print(" = ");
   Serial.print(seconds);
   Serial.println("s");
@@ -113,15 +112,36 @@ int convertAnalogValue(int value, int max){
   return (int)(value * (double)max/1024);
 }
 
-void setTime(){
-  Serial.println("Set time mode");
+void displaySave(){
+    Serial.println("Display save");
+    disp.displayByte(_S, _A, _U, _E);
+    delay(1000);
+    disp.clear();
+}
+
+void setTime(bool isSchedule){
+  disp.brightness(6);
+
+  if (isSchedule){
+    Serial.println("Set schedule mode");
+    disp.displayByte(_S, _C, _E, _D);
+    clockTimer.stop();
+  } else {
+    Serial.println("Set time mode");
+    disp.displayByte(_C, _l, _O, _C);
+    clockTimer.start();
+  }
+
   int savedHours = analogRead(DURATION_PIN);
   int savedMinutes = analogRead(TIME_PIN);
   bool showPoint = true;
-  clockTimer.start();
 
   while(true){
     btn.tick();
+    if (isSchedule){
+      disp.point(true);
+    }
+    
     if (clockTimer.tick()){
       showPoint = !showPoint;
       disp.point(showPoint);
@@ -138,15 +158,60 @@ void setTime(){
 
     if (btn.held()){
       clockTimer.stop();
-      rtc.setHMSDMY(convertAnalogValue(currentHours, 24), convertAnalogValue(currentMinutes, 60), 0, BUILD_DAY, BUILD_MONTH, BUILD_YEAR);
+      if (isSchedule){
+        scheduledHour = convertAnalogValue(currentHours, 24);
+        scheduledMinute = convertAnalogValue(currentMinutes, 60);        
+        EEPROM.write(ADDR_HOURS, scheduledHour);
+        EEPROM.write(ADDR_MINUTES, scheduledMinute);
+      } else {
+        rtc.setHMSDMY(convertAnalogValue(currentHours, 24), convertAnalogValue(currentMinutes, 60), 0, BUILD_DAY, BUILD_MONTH, BUILD_YEAR);
+      }
+
+      displaySave();
       return;
     }
 
     if (btn.click()){
       clockTimer.stop();
+      if (isSchedule) {
+        setTime(false);
+        return;
+      }
       return;
     }
   }
+}
+
+void setDuration() {
+    Serial.println("Set duration");
+    disp.brightness(6);
+    disp.displayByte(_D, _U, _r, _empty);
+    int savedDuration = analogRead(DURATION_PIN);
+    
+    while (true){
+      btn.tick();
+
+      int currentDuration = analogRead(DURATION_PIN);
+      if (abs(currentDuration - savedDuration) > THRESHOLD){
+        savedDuration = currentDuration;
+        unsigned long seconds = convertAnalogValue(savedDuration, MAX_DURATION);
+        disp.point(false);
+        disp.displayInt(seconds);
+        delay(10);
+      }
+
+      if (btn.held()){
+        storedDuration = currentDuration;
+        EEPROM.write(ADDR_DURATION, storedDuration);
+        displaySave();
+        return;
+      }
+
+      if (btn.click()){
+        setTime(true);
+        return;
+      }
+    }
 }
 
 bool shouldRunByTime(){
@@ -163,49 +228,9 @@ bool shouldRunByTime(){
 
 void settingsMode(){
   Serial.println("Settings mode");
-  disp.brightness(6);
-  disp.displayByte(_S, _e, _t, _empty);
-  int savedDuration = analogRead(DURATION_PIN);
-  int savedTime = analogRead(TIME_PIN);
-
-  while(true){
-    btn.tick();
-
-    int currentDuration = analogRead(DURATION_PIN);
-    if (abs(currentDuration - savedDuration) > THRESHOLD){
-      savedDuration = currentDuration;
-      unsigned long seconds = convertAnalogValue(savedDuration, MAX_DURATION);
-      disp.point(false);
-      disp.displayInt(seconds);
-      delay(10);
-    }
-
-    int currentTime = analogRead(TIME_PIN);
-    if (abs(currentTime - savedTime) > THRESHOLD){
-      savedTime = currentTime;
-      unsigned long minutes = convertAnalogValue(savedTime, 1440);
-      disp.point(true);
-      disp.displayClock((int)minutes/60, (int)minutes%60);
-      delay(10);
-    }
-
-    if (btn.click()){
-      setTime();
-      return;
-    }
-
-    if (btn.held()){
-      scheduledHour = (int)convertAnalogValue(savedTime, 1440)/60;
-      scheduledMinute = (int)convertAnalogValue(savedTime, 1440)%60;
-      storedDuration = savedDuration;
-
-      EEPROM.write(ADDR_DURATION, storedDuration);
-      EEPROM.write(ADDR_HOURS, scheduledHour);
-      EEPROM.write(ADDR_MINUTES, scheduledMinute);
-      Serial.println("Exit settings mode");
-      return;
-    }
-  }
+  setDuration();
+  Serial.println("Exit settings mode");
+  delay(300);
 }
 
 void loop()
