@@ -32,7 +32,8 @@ EncButton<EB_TICK, BTN_PIN> btn;
 MicroDS3231 rtc;
 
 TimerMs clockTimer(500, 0, 0);
-TimerMs scheduleTimer(35000, 1, 0);
+TimerMs scheduleTimer(30000, 1, 0);
+TimerMs restartTimer(60000, 0, 1);
 
 // Default values
 int scheduledHour = 0;
@@ -106,6 +107,8 @@ void startWater(){
   disp.clear();
   disp.brightness(0);
   Serial.println("End pump");
+  scheduleTimer.stop();
+  restartTimer.start();
 }
 
 int convertAnalogValue(int value, int max){
@@ -242,6 +245,10 @@ void loop()
       Serial.println("Scheduled run");
       startWater();
     }
+  }
+
+  if (restartTimer.tick()){
+    scheduleTimer.start();
   }
 
   if (btn.click()) {
